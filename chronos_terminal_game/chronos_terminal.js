@@ -5,13 +5,15 @@ readline.emitKeypressEvents(process.stdin);
 process.stdin.setRawMode(true);
 
 class Room {
-  constructor(name, description, timeFlow, exits, objects = [], npc = null) {
+  constructor(name, description, timeFlow, exits, objects = [], correctItem = null, npc = null) {
     this.name = name;
     this.description = description;
     this.timeFlow = timeFlow;
     this.exits = exits;
     this.objects = objects;
+    this.correctItem = correctItem;
     this.npc = npc;
+    this.unlocked = this.name === "Quarantine Cell"; // Only the first room is unlocked by default
   }
 }
 
@@ -33,19 +35,6 @@ class Item {
   }
 }
 
-class NPC {
-  constructor(name, dialogues) {
-    this.name = name;
-    this.dialogues = dialogues;
-  }
-  speak(flow) {
-    if (flow === 0) return `${this.name} is frozen in time.`;
-    if (flow < 0.5) return `${this.name} says: \"${this.dialogues.slow}\"`;
-    if (flow > 2) return `${this.name} says: \"${this.dialogues.fast}\"`;
-    return `${this.name} says: \"${this.dialogues.normal}\"`;
-  }
-}
-
 const inventory = [];
 let chronoStability = 100;
 let minutesPassed = 0;
@@ -64,73 +53,79 @@ const world = {
     "Quarantine Cell",
     "Dim room. Flashbacks. First clue to vaccine begins here.",
     1,
-    { d: "Archive Chamber" },
+    { s: "Archive Chamber" },
     [
       new Item("Containment Gel", "A rare substance to hold unstable chemicals.", true),
       new Item("Blood Vial", "Red and clotted.", true),
       new Item("Thermos", "Filled with cold soup.")
-    ]
+    ],
+    "Containment Gel"
   ),
   "Archive Chamber": new Room(
     "Archive Chamber",
     "Silent rows of data. Clues embedded in logs.",
     0.8,
-    { a: "Quarantine Cell", s: "Bio-Chem Lab" },
+    { s: "Bio-Chem Lab" },
     [
       new Item("Stabilized Enzyme", "A modified protein crucial for synthesis.", true),
       new Item("Data Disk", "Old archive with corrupted data."),
       new Item("Dusty Clipboard", "Unreadable documents.")
-    ]
+    ],
+    "Stabilized Enzyme"
   ),
   "Bio-Chem Lab": new Room(
     "Bio-Chem Lab",
     "The lab smells of rot and chemicals.",
     1.5,
-    { w: "Archive Chamber", e: "Ventilation Nexus" },
+    { s: "Ventilation Nexus" },
     [
       new Item("Reactive Agent Z", "A catalyst needed for final binding.", true),
       new Item("Broken Beaker", "Glass pieces."),
       new Item("Heat Sensor", "Non-functional.")
-    ]
+    ],
+    "Reactive Agent Z"
   ),
   "Ventilation Nexus": new Room(
     "Ventilation Nexus",
     "Gas leak threat—wrong item leads to choking.",
     0.5,
-    { w: "Bio-Chem Lab", s: "Robotics Bay" },
+    { s: "Robotics Bay" },
     [
       new Item("Gas Neutralizer", "Neutralizes airborne toxins."),
       new Item("Metal Pipe", "Too heavy to carry."),
       new Item("Airflow Chart", "Outdated and torn.")
-    ]
+    ],
+    "Gas Neutralizer"
   ),
   "Robotics Bay": new Room(
     "Robotics Bay",
     "Machinery twitches. One tool remains functional.",
     1,
-    { n: "Ventilation Nexus", e: "Power Core" },
+    { s: "Power Core" },
     [
       new Item("Mechanical Injector", "Precise delivery device for serum."),
       new Item("Drone Arm", "Too bulky."),
       new Item("Broken Panel", "Sparking wires.")
-    ]
+    ],
+    "Mechanical Injector"
   ),
   "Power Core": new Room(
     "Power Core",
     "Surge room. Wrong item causes instability.",
     2.5,
-    { w: "Robotics Bay", d: "Vaccine Assembly Lab" },
+    { s: "Vaccine Assembly Lab" },
     [
       new Item("Battery Regulator Chip", "Stabilizes high energy output."),
       new Item("Loose Cable", "Worn and frayed."),
       new Item("Energy Cell", "Drained.")
-    ]
+    ],
+    "Battery Regulator Chip"
   ),
   "Vaccine Assembly Lab": new Room(
     "Vaccine Assembly Lab",
     "Final showdown. Combine everything under pressure.",
     1,
-    { u: "Power Core" },
+    {},
     []
   )
 };
@@ -141,9 +136,9 @@ function tickTime(flow) {
   minutesPassed += Math.round(flow * 5);
   chronoStability -= Math.floor(Math.abs(flow - 1) * 5);
   for (const item of inventory) item.update(flow);
-  if (chronoStability <= 30) console.log(">> You feel your thoughts slipping...");
+  if (chronoStability <= 30) console.log("⚠️ WARNING: Your mental clarity is degrading.");
   if (chronoStability <= 0) {
-    console.log(">> Time collapses around you. Game over.");
+    console.log("💀 You collapse. ChronoStability has reached zero.");
     process.exit();
   }
 }
@@ -194,6 +189,16 @@ function chooseItem(room) {
       const item = room.objects.splice(choice - 1, 1)[0];
       inventory.push(item);
       console.log(`You took the ${item.name}.`);
+      if (item.name === room.correctItem) {
+        const exitKeys = Object.values(room.exits);
+        if (exitKeys.length > 0) {
+          const nextRoomName = exitKeys[0];
+          world[nextRoomName].unlocked = true;
+        }
+      } else {
+        chronoStability -= 15;
+        console.log("⚠️ This item seems unstable... Your ChronoStability drops!");
+      }
     } else {
       console.log("Invalid choice.");
     }
@@ -223,11 +228,15 @@ process.stdin.on("keypress", (str, key) => {
   if (["w", "a", "s", "d", "u"].includes(k)) {
     const nextRoomKey = currentRoom.exits[k];
     if (nextRoomKey && world[nextRoomKey]) {
-      currentRoom = world[nextRoomKey];
-      tickTime(currentRoom.timeFlow);
-      printRoom(currentRoom);
+      if (!world[nextRoomKey].unlocked) {
+        console.log("🚪 The path is blocked. Maybe something is missing...");
+      } else {
+        currentRoom = world[nextRoomKey];
+        tickTime(currentRoom.timeFlow);
+        printRoom(currentRoom);
+      }
     } else {
-      console.log("No path in that direction.");
+      console.log("❌ No path in that direction.");
     }
   }
   if (k === 'e') chooseItem(currentRoom);
